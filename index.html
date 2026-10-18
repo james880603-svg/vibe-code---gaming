@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>五子棋對戰</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #2c3e50;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #333;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            overflow: hidden;
+            background-color: #d19a5a; /* 木紋底色 */
+            /* 簡易的木紋漸層效果 */
+            background-image: repeating-linear-gradient(
+                45deg,
+                rgba(0,0,0,0.03) 0px,
+                rgba(0,0,0,0.03) 2px,
+                transparent 2px,
+                transparent 4px
+            );
+        }
+
+        #board-canvas {
+            display: block;
+            cursor: pointer;
+        }
+
+        .stone {
+            position: absolute;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.4);
+            transition: opacity 0.2s;
+        }
+
+        .stone.black {
+            background: radial-gradient(circle at 10px 10px, #666, #000);
+        }
+
+        .stone.white {
+            background: radial-gradient(circle at 10px 10px, #fff, #ccc);
+        }
+
+        /* 覆蓋式面板 (選單與結算) */
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        .panel {
+            background: #fff;
+            padding: 30px 40px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .panel h2 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+
+        .btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 10px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background-color: #2980b9;
+        }
+
+        .btn.black-btn { background-color: #333; }
+        .btn.black-btn:hover { background-color: #111; }
+        
+        .btn.white-btn { background-color: #f1c40f; color: #333; }
+        .btn.white-btn:hover { background-color: #f39c12; }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="board-canvas" width="600" height="600"></canvas>
+    
+    <!-- 開局選單 -->
+    <div id="start-menu" class="overlay">
+        <div class="panel">
+            <h2>五子棋對戰</h2>
+            <p>請選擇你要執行的棋子：</p>
+            <button class="btn black-btn" onclick="startGame(1)">執黑 (先手)</button>
+            <button class="btn white-btn" onclick="startGame(2)">執白 (後手)</button>
+        </div>
+    </div>
+
+    <!-- 結算畫面 -->
+    <div id="game-over-menu" class="overlay hidden">
+        <div class="panel">
+            <h2 id="result-text">遊戲結束</h2>
+            <button class="btn" onclick="showStartMenu()">重新開始</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('board-canvas');
+    const ctx = canvas.getContext('2d');
+    const gameContainer = document.getElementById('game-container');
+    const startMenu = document.getElementById('start-menu');
+    const gameOverMenu = document.getElementById('game-over-menu');
+    const resultText = document.getElementById('result-text');
+
+    const BOARD_SIZE = 15;
+    const CELL_SIZE = 40;
+    const PADDING = 20; // 棋盤邊距
+    
+    let board = [];
+    let playerColor = 1; // 1: 黑, 2: 白
+    let aiColor = 2;
+    let currentPlayer = 1; // 黑子先手
+    let isGameRunning = false;
+    let stoneElements = []; // 儲存 DOM 棋子以便清理
+
+    // 繪製棋盤線條
+    function drawBoard() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+
+        for (let i = 0; i < BOARD_SIZE; i++) {
+            // 橫線
+            ctx.beginPath();
+            ctx.moveTo(PADDING, PADDING + i * CELL_SIZE);
+            ctx.lineTo(PADDING + (BOARD_SIZE - 1) * CELL_SIZE, PADDING + i * CELL_SIZE);
+            ctx.stroke();
+
+            // 直線
+            ctx.beginPath();
+            ctx.moveTo(PADDING + i * CELL_SIZE, PADDING);
+            ctx.lineTo(PADDING + i * CELL_SIZE, PADDING + (BOARD_SIZE - 1) * CELL_SIZE);
+            ctx.stroke();
+        }
+
+        // 畫天元與星位 (五子棋常見的 5 個點)
+        const stars = [3, 11];
+        ctx.fillStyle = '#000';
+        for (let i of stars) {
+            for (let j of stars) {
+                drawDot(i, j);
+            }
+        }
+        drawDot(7, 7); // 天元
+    }
+
+    function drawDot(x, y) {
+        ctx.beginPath();
+        ctx.arc(PADDING + x * CELL_SIZE, PADDING + y * CELL_SIZE, 4, 0, 2 * Math.PI);
+        ctx.fill();
+    }
+
+    function showStartMenu() {
+        gameOverMenu.classList.add('hidden');
+        startMenu.classList.remove('hidden');
+        clearStones();
+        drawBoard();
+    }
+
+    function clearStones() {
+        stoneElements.forEach(stone => stone.remove());
+        stoneElements = [];
+    }
+
+    // 初始化遊戲
+    function startGame(selectedColor) {
+        playerColor = selectedColor;
+        aiColor = selectedColor === 1 ? 2 : 1;
+        currentPlayer = 1; // 永遠是黑子先手
+        isGameRunning = true;
+        
+        // 初始化空棋盤陣列
+        board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
+        clearStones();
+        
+        startMenu.classList.add('hidden');
+        gameOverMenu.classList.add('hidden');
+
+        // 如果玩家選白子，AI (黑子) 先下
+        if (aiColor === 1) {
+            setTimeout(aiMove, 100); // 稍微延遲讓 UI 更新
+        }
+    }
+
+    // 處理玩家點擊
+    canvas.addEventListener('click', (e) => {
+        if (!isGameRunning || currentPlayer !== playerColor) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        // 計算最近的交叉點索引
+        const x = Math.round((mouseX - PADDING) / CELL_SIZE);
+        const y = Math.round((mouseY - PADDING) / CELL_SIZE);
+
+        // 檢查是否在棋盤內且該位置為空
+        if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE && board[y][x] === 0) {
+            placeStone(x, y, playerColor);
+        }
+    });
+
+    // 放置棋子
+    function placeStone(x, y, color) {
+        board[y][x] = color;
+        
+        // 建立棋子 DOM 元素
+        const stone = document.createElement('div');
+        stone.classList.add('stone');
+        stone.classList.add(color === 1 ? 'black' : 'white');
+        
+        // 定位 (加上 PADDING 並置中)
+        stone.style.left = `${PADDING + x * CELL_SIZE}px`;
+        stone.style.top = `${PADDING + y * CELL_SIZE}px`;
+        
+        gameContainer.appendChild(stone);
+        stoneElements.push(stone);
+
+        // 檢查勝負
+        if (checkWin(x, y, color)) {
+            endGame(color === playerColor ? '你贏了！🎉' : '電腦贏了！💻');
+            return;
+        }
+
+        // 檢查平手
+        if (stoneElements.length === BOARD_SIZE * BOARD_SIZE) {
+            endGame('平手！');
+            return;
+        }
+
+        // 切換玩家
+        currentPlayer = currentPlayer === 1 ? 2 : 1;
+
+        // 如果輪到 AI
+        if (currentPlayer === aiColor) {
+            setTimeout(aiMove, 100);
+        }
+    }
+
+    function endGame(msg) {
+        isGameRunning = false;
+        resultText.innerText = msg;
+        gameOverMenu.classList.remove('hidden');
+    }
+
+    // 勝負判定
+    function checkWin(x, y, color) {
+        const directions = [
+            [1, 0], [0, 1], [1, 1], [1, -1] // 橫、豎、右下斜、右上斜
+        ];
+
+        for (let [dx, dy] of directions) {
+            let count = 1; // 包含自己
+            
+            // 正向檢查
+            let nx = x + dx, ny = y + dy;
+            while (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && board[ny][nx] === color) {
+                count++;
+                nx += dx;
+                ny += dy;
+            }
+            
+            // 反向檢查
+            nx = x - dx; ny = y - dy;
+            while (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE && board[ny][nx] === color) {
+                count++;
+                nx -= dx;
+                ny -= dy;
+            }
+
+            if (count >= 5) return true;
+        }
+        return false;
+    }
+
+    // AI 邏輯 (權重計分法)
+    function aiMove() {
+        let maxScore = -1;
+        let bestMoves = [];
+
+        for (let y = 0; y < BOARD_SIZE; y++) {
+            for (let x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] === 0) {
+                    // 計算防禦分數(阻擋玩家) + 進攻分數(AI自己)
+                    let score = evaluatePoint(x, y, playerColor) + evaluatePoint(x, y, aiColor);
+                    
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestMoves = [{x, y}];
+                    } else if (score === maxScore) {
+                        bestMoves.push({x, y});
+                    }
+                }
+            }
+        }
+
+        // 如果有多個同分最高點，隨機選一個
+        if (bestMoves.length > 0) {
+            const move = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+            placeStone(move.x, move.y, aiColor);
+        } else {
+            // 例外處理 (理論上不會發生)
+            placeStone(7, 7, aiColor);
+        }
+    }
+
+    // 評估特定點對特定顏色的價值
+    function evaluatePoint(x, y, color) {
+        const directions = [ [1, 0], [0, 1], [1, 1], [1, -1] ];
+        let totalScore = 0;
+
+        for (let [dx, dy] of directions) {
+            let count = 1; // 連續棋子數
+            let block = 0; // 兩端被擋住的數量 (0~2)
+            let emptyCount = 0; // 中間是否有空隙(簡單版先不處理跳子)
+
+            // 正向
+            let nx = x + dx, ny = y + dy;
+            while (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
+                if (board[ny][nx] === color) {
+                    count++;
+                } else if (board[ny][nx] === 0) {
+                    break;
+                } else {
+                    block++;
+                    break;
+                }
+                nx += dx; ny += dy;
+            }
+            if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) block++;
+
+            // 反向
+            nx = x - dx; ny = y - dy;
+            while (nx >= 0 && nx < BOARD_SIZE && ny >= 0 && ny < BOARD_SIZE) {
+                if (board[ny][nx] === color) {
+                    count++;
+                } else if (board[ny][nx] === 0) {
+                    break;
+                } else {
+                    block++;
+                    break;
+                }
+                nx -= dx; ny -= dy;
+            }
+            if (nx < 0 || nx >= BOARD_SIZE || ny < 0 || ny >= BOARD_SIZE) block++;
+
+            // 根據連續數量與被擋狀態給分
+            if (count >= 5) totalScore += 100000;
+            else if (count === 4 && block === 0) totalScore += 10000;
+            else if (count === 4 && block === 1) totalScore += 1000;
+            else if (count === 3 && block === 0) totalScore += 1000;
+            else if (count === 3 && block === 1) totalScore += 100;
+            else if (count === 2 && block === 0) totalScore += 100;
+            else if (count === 2 && block === 1) totalScore += 10;
+            else totalScore += 1;
+        }
+        return totalScore;
+    }
+
+    // 初始化畫面
+    drawBoard();
+
+</script>
+</body>
+</html>
